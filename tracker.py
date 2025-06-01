@@ -2,19 +2,23 @@ import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import matplotlib.pyplot as plt
-import matplotlib.dates as mdates # Though not explicitly used in current chart, good to have
-from datetime import datetime
+# import matplotlib.dates as mdates # Not strictly used, can be removed if not needed
+# from datetime import datetime # Not strictly used, can be removed if not needed
 import os
 import re
-import json # For potential direct JSON parsing if needed, not primary here
+# import json # Not strictly used, can be removed if not needed
+
+# --- For loading .env file for local development ---
+from dotenv import load_dotenv
+load_dotenv() # Load environment variables from .env file if it exists
+# ----------------------------------------------------
 
 # --- Configuration ---
 TEAM_ID = "372250"
 TEAM_NAME = "Obsidian Howlers"
 TEAM_PAGE_URL = f"https://ctftime.org/team/{TEAM_ID}"
 
-# Configuration for Apps Script Web App will be handled by environment variables
-# or direct assignment for local testing later in the script.
+# Secrets will be loaded from environment variables (either from .env locally or GitHub Secrets in Actions)
 
 # --- Helper Functions ---
 def get_event_id_from_url(event_url):
@@ -35,7 +39,6 @@ def fetch_total_teams(event_url):
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
         
-        # Look for "XXX teams total" more robustly
         scoreboard_header = soup.find('h3', string='Scoreboard')
         if scoreboard_header:
             total_teams_p = scoreboard_header.find_next_sibling('p', align='right')
@@ -46,7 +49,6 @@ def fetch_total_teams(event_url):
                     print(f"    Found {total_teams_count} total teams.")
                     return total_teams_count
         
-        # Fallback if the above structure isn't found
         total_teams_text_element = soup.find(string=re.compile(r'\d+\s+teams\s+total'))
         if total_teams_text_element:
             match = re.search(r'(\d+)\s+teams\s+total', total_teams_text_element)
@@ -81,28 +83,23 @@ def scrape_team_ctf_data():
         print("Could not find 'Participated in CTF events' section.")
         return []
 
-    # Find all year tabs. The active one is usually the current/latest year.
-    # We need to process all tabs if multiple years exist.
     year_tab_links = h3_participated.find_next_sibling('ul', class_='nav-tabs').find_all('a')
-    
-    year_data_to_process = [] # Store (year_string, tab_content_div_id)
+    year_data_to_process = []
 
     for link in year_tab_links:
         year_str = link.get_text(strip=True)
-        tab_id = link['href'].lstrip('#') # e.g., "rating_2025"
+        tab_id = link['href'].lstrip('#')
         if year_str.isdigit():
             year_data_to_process.append({'year': year_str, 'tab_id': tab_id})
 
-    if not year_data_to_process: # Fallback if tabs aren't years (e.g. only one year of data)
+    if not year_data_to_process:
         first_tab_content = h3_participated.find_next_sibling('div', class_='tab-content').find('div', class_='tab-pane')
         if first_tab_content:
-            # Try to infer year from content if possible
             overall_rating_p = first_tab_content.find('p', string=re.compile(r'Overall rating place:.*?in\s+(\d{4})'))
             if overall_rating_p:
                 year_match = re.search(r'in\s+(\d{4})', overall_rating_p.text)
                 if year_match:
                      year_data_to_process.append({'year': year_match.group(1), 'tab_id': first_tab_content.get('id')})
-
 
     for year_info in year_data_to_process:
         year_str = year_info['year']
@@ -121,10 +118,10 @@ def scrape_team_ctf_data():
             continue
 
         rows = table.find_all('tr')
-        if len(rows) <= 1: # Only header row
+        if len(rows) <= 1:
             continue
 
-        for row_idx, row in enumerate(rows[1:]): # Skip header row
+        for row_idx, row in enumerate(rows[1:]):
             cols = row.find_all('td')
             if len(cols) == 5:
                 try:
@@ -135,7 +132,7 @@ def scrape_team_ctf_data():
                     event_url = f"https://ctftime.org{event_url_suffix}" if event_url_suffix else None
                     event_id = get_event_id_from_url(event_url)
                     ctf_points_text = cols[3].text.strip()
-                    rating_points_text = cols[4].text.strip().replace('*', '') # Remove weight voting asterisk
+                    rating_points_text = cols[4].text.strip().replace('*', '')
 
                     ctf_points_value = 0.0
                     try:
@@ -149,24 +146,19 @@ def scrape_team_ctf_data():
                     except ValueError:
                         print(f"  Warning: Could not parse Rating points '{rating_points_text}' for {event_name}. Using 0.0.")
 
+                    total_teams_data = fetch_total_teams(event_url) if (event_id and event_name != "N/A") else 'N/A'
+                    total_teams = total_teams_data or 'N/A'
 
-                    if not event_id and event_name != "N/A":
-                        print(f"  Could not parse event ID for {event_name}, skipping total teams fetch.")
-                        total_teams = 'N/A'
-                    elif event_name == "N/A":
-                        total_teams = 'N/A'
-                    else:
-                        total_teams = fetch_total_teams(event_url) or 'N/A' # Use 'N/A' if None
 
                     rank_percentile = 'N/A'
                     if isinstance(total_teams, int) and place.isdigit():
                         if total_teams > 0:
                             rank_percentile = round((int(place) / total_teams) * 100, 2)
                         else:
-                            rank_percentile = 'N/A' # Avoid division by zero
+                            rank_percentile = 'N/A'
 
                     participated_ctfs.append({
-                        'Year': year_str, # Keep as string initially for DataFrame
+                        'Year': year_str,
                         'Event Name': event_name,
                         'Event ID': event_id if event_id else 'N/A',
                         'Your Rank': place if place else 'N/A',
@@ -186,40 +178,24 @@ def scrape_team_ctf_data():
         print("No CTFs found after scraping.")
         return []
 
-    # Convert to DataFrame for easier sorting
     df = pd.DataFrame(participated_ctfs)
-    
-    # Ensure 'Year' is integer for correct sorting, handle potential 'N/A' or non-numeric strings
     df['Year'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
-
-    # CTFtime team page lists events within a year from newest to oldest.
-    # We need to sort by Year (ascending), then effectively reverse the order within each year
-    # to get chronological. A simpler way is to sort by Year, then use a stable sort
-    # on an index that represents the original scraped order (which is reverse chronological within a year).
-    
-    df = df.iloc[::-1] # Reverse the whole dataframe first (newest year, newest event -> oldest year, oldest event)
-    df = df.sort_values(by='Year', ascending=True, kind='mergesort') # Stable sort by Year
+    df = df.iloc[::-1]
+    df = df.sort_values(by='Year', ascending=True, kind='mergesort')
 
     print(f"Total CTFs scraped and processed: {len(df)}")
     return df.to_dict('records')
 
-
 # --- Google Apps Script Interaction ---
 def send_data_to_apps_script(data, web_app_url, secret_token):
-    if not web_app_url or "YOUR_APPS_SCRIPT_WEB_APP_URL_HERE" in web_app_url: # Check for placeholder
-        print("Apps Script Web App URL not configured or is placeholder. Skipping sheet update.")
-        return False
-    if not secret_token or "YOUR_TOKEN_HERE" in secret_token: # Check for placeholder
-        print("Apps Script secret token not configured or is placeholder. Skipping sheet update.")
-        return False
-
-    print(f"Sending data to Google Apps Script Web App...") # Don't print URL with token in logs
+    # Note: The placeholder checks are removed here as we expect env vars to be set or script to exit.
+    # The main execution block will handle the check for missing env vars.
+    
+    print(f"Sending data to Google Apps Script Web App...")
     try:
-        # Add the secret token as a URL parameter
         url_with_token = f"{web_app_url}?token={secret_token}"
         headers = {'Content-Type': 'application/json'}
-        # Send data as JSON in the POST body
-        response = requests.post(url_with_token, json=data, headers=headers, timeout=45) # Increased timeout
+        response = requests.post(url_with_token, json=data, headers=headers, timeout=45)
         response.raise_for_status() 
         
         response_json = response.json()
@@ -240,27 +216,24 @@ def send_data_to_apps_script(data, web_app_url, secret_token):
         return False
     except ValueError: # Includes JSONDecodeError
         print(f"Could not decode JSON response from Apps Script.")
-        if 'response' in locals() and response:
+        if 'response' in locals() and response: # check if response variable exists
             print(f"Response content: {response.text}")
         return False
 
 # --- Chart Generation ---
-# --- Chart Generation ---
-# --- Chart Generation ---
 def generate_progress_chart(data, filename="progress_chart.png"):
-    # Apply dark theme
-    plt.style.use('dark_background') ####################### DARK THEME ADDED #######################
+    plt.style.use('dark_background')
 
     if not data:
         print("No data to generate chart.")
         fig, ax = plt.subplots(figsize=(10, 5))
         ax.text(0.5, 0.5, 'No CTF Data Available to Plot',
                 horizontalalignment='center', verticalalignment='center',
-                fontsize=12, color='lightgray') # Adjusted text color for dark theme
+                fontsize=12, color='lightgray')
         ax.set_xticks([])
         ax.set_yticks([])
-        fig.patch.set_facecolor('#1e1e1e') # Set figure background for consistency
-        ax.set_facecolor('#1e1e1e')     # Set axes background
+        fig.patch.set_facecolor('#1e1e1e')
+        ax.set_facecolor('#1e1e1e')
         plt.savefig(filename, bbox_inches='tight', facecolor=fig.get_facecolor())
         print(f"Empty/Placeholder chart saved as {filename}")
         return
@@ -269,20 +242,18 @@ def generate_progress_chart(data, filename="progress_chart.png"):
     
     df['Rank Percentile'] = pd.to_numeric(df['Rank Percentile'], errors='coerce')
     df['Year'] = pd.to_numeric(df['Year'], errors='coerce').fillna(0).astype(int)
-    df['Event Label'] = df['Year'].astype(str) + ": " + df['Event Name'].str.slice(0, 25) # Slightly longer event names
+    df['Event Label'] = df['Year'].astype(str) + ": " + df['Event Name'].str.slice(0, 25)
 
     if df.empty or df['Rank Percentile'].isnull().all():
         print("No valid rank percentiles to plot after processing.")
-        # Call with empty list to generate placeholder (already handles dark theme)
         generate_progress_chart([], filename)
         return
 
-    fig, ax1 = plt.subplots(figsize=(18, 9)) # Adjusted size slightly
-    fig.patch.set_facecolor('#1e1e1e') # Figure background for dark theme
-    ax1.set_facecolor('#282828')     # Axes background for dark theme (slightly different)
+    fig, ax1 = plt.subplots(figsize=(18, 9))
+    fig.patch.set_facecolor('#1e1e1e')
+    ax1.set_facecolor('#282828')
 
-    # Plot Rank Percentile
-    percentile_color = 'cyan' ####################### COLOR CHANGED #######################
+    percentile_color = 'cyan'
     ax1.set_xlabel('CTF Event (Chronological Order)', fontsize=12, labelpad=15, color='lightgray')
     ax1.set_ylabel('Rank Percentile (Lower is better)', color=percentile_color, fontsize=12)
     
@@ -295,38 +266,32 @@ def generate_progress_chart(data, filename="progress_chart.png"):
         for i, row in valid_percentile_df.iterrows():
             ax1.annotate(f"{row['Rank Percentile']:.1f}%", 
                          (row['Event Label'], row['Rank Percentile']),
-                         textcoords="offset points", xytext=(0, 10), # Adjusted y-offset to be above marker
+                         textcoords="offset points", xytext=(0, 10),
                          ha='center', fontsize=9, color=percentile_color,
-                         bbox=dict(boxstyle="round,pad=0.3", fc="#333333", ec="none", alpha=0.7)) # Added background to annotation
+                         bbox=dict(boxstyle="round,pad=0.3", fc="#333333", ec="none", alpha=0.7))
 
-    # X and Y Tick Parameters
     ax1.tick_params(axis='y', labelcolor=percentile_color, labelsize=10, color='gray')
-    ax1.tick_params(axis='x', rotation=65, labelsize=9, color='gray') # Adjusted rotation
+    ax1.tick_params(axis='x', rotation=65, labelsize=9, color='gray')
     for label in ax1.get_xticklabels():
         label.set_horizontalalignment('right')
-        label.set_color('lightgray') # X-tick label color
+        label.set_color('lightgray')
 
-    # Grid lines
     ax1.grid(True, axis='y', linestyle=':', alpha=0.4, color='gray')
-    ax1.grid(False, axis='x') # Turn off vertical grid lines if desired
+    ax1.grid(False, axis='x')
 
-    # Invert Y-axis for Rank Percentile
     if not valid_percentile_df.empty:
         ax1.invert_yaxis()
-        # Set y-limits to give some padding, especially for inverted axis
         min_val = valid_percentile_df['Rank Percentile'].min()
         max_val = valid_percentile_df['Rank Percentile'].max()
-        padding = (max_val - min_val) * 0.1 # 10% padding
-        if max_val == min_val: padding = 5 # Handle case with only one value
+        padding = (max_val - min_val) * 0.1
+        if max_val == min_val or padding == 0: padding = 5 
         ax1.set_ylim(max_val + padding, min_val - padding)
 
-
-    # Title and Legend
     fig.suptitle(f'{TEAM_NAME} - CTF Rank Percentile Over Time', fontsize=16, fontweight='bold', color='white')
     if not valid_percentile_df.empty:
-        ax1.legend(loc='upper right', fontsize=10, framealpha=0.5) # Simpler legend for one series
+        ax1.legend(loc='upper right', fontsize=10, framealpha=0.5)
 
-    fig.tight_layout(rect=[0, 0.05, 1, 0.93]) # Adjusted rect for better spacing
+    fig.tight_layout(rect=[0, 0.05, 1, 0.93])
     
     plt.savefig(filename, bbox_inches='tight', facecolor=fig.get_facecolor(), dpi=100)
     print(f"Chart saved as {filename}")
@@ -338,27 +303,29 @@ if __name__ == "__main__":
 
     if ctf_data:
         print(f"\n--- Data Scraped ({len(ctf_data)} events) ---")
-        # For local testing, replace these with your actual URL and Token
-        # For GitHub Actions, these will be picked up from environment variables
+        
+        apps_script_url = os.getenv('APPS_SCRIPT_WEB_APP_URL')
+        apps_script_token = os.getenv('APPS_SCRIPT_SECRET_TOKEN')
 
-        apps_script_url = os.getenv('APPS_SCRIPT_WEB_APP_URL', default_apps_script_url)
-        apps_script_token = os.getenv('APPS_SCRIPT_SECRET_TOKEN', default_apps_script_token)
-        
-        print("\n--- Attempting to Update Google Sheet via Apps Script ---")
-        sheet_updated_successfully = send_data_to_apps_script(ctf_data, apps_script_url, apps_script_token)
-        
-        if sheet_updated_successfully:
-            print("Google Sheet update attempt finished successfully.")
+        if not apps_script_url or not apps_script_token:
+            print("\nERROR: APPS_SCRIPT_WEB_APP_URL and/or APPS_SCRIPT_SECRET_TOKEN environment variables are not set.")
+            print("Please set them for the script to connect to Google Apps Script.")
+            print("Skipping Google Sheet update.")
+            sheet_updated_successfully = False # Explicitly set to false
         else:
-            print("Google Sheet update attempt failed or was skipped.")
+            print("\n--- Attempting to Update Google Sheet via Apps Script ---")
+            sheet_updated_successfully = send_data_to_apps_script(ctf_data, apps_script_url, apps_script_token)
+        
+        if sheet_updated_successfully: # This check is now after the potential skip
+            print("Google Sheet update attempt finished successfully.")
+        # No 'else' here because the error/skip message is handled above
 
         print("\n--- Generating Progress Chart ---")
-        generate_progress_chart(ctf_data) # Generate chart regardless of sheet update status for now
+        generate_progress_chart(ctf_data) # Generate chart even if sheet update failed/skipped
         
     else:
         print("\nNo CTF data scraped. Generating an empty chart if it doesn't exist.")
-        if not os.path.exists("progress_chart.png"): # Only generate empty if one doesn't exist
+        if not os.path.exists("progress_chart.png"):
             generate_progress_chart([])
-
 
     print("\n--- CTF Progress Tracker Finished ---")
