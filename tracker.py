@@ -340,13 +340,6 @@ if __name__ == "__main__":
         print(f"\n--- Data Scraped ({len(ctf_data)} events) ---")
         # For local testing, replace these with your actual URL and Token
         # For GitHub Actions, these will be picked up from environment variables
-        
-        # --- REPLACE THESE FOR LOCAL TESTING ---
-        # --- REPLACE THESE FOR LOCAL TESTING ---
-        default_apps_script_url = 'https://script.google.com/macros/s/AKfycbxl-WxUZ7j1AUwLY00s2Sf5ds6xme78Gvw1yMVCyg6OBGB5Cva6dAuvNchcq6bM22zX/exec'
-        default_apps_script_token = 'MySecretCTFTrackerToken123'
-        # --- END OF LOCAL TESTING REPLACE SECTION ---
-        # --- END OF LOCAL TESTING REPLACE SECTION ---
 
         apps_script_url = os.getenv('APPS_SCRIPT_WEB_APP_URL', default_apps_script_url)
         apps_script_token = os.getenv('APPS_SCRIPT_SECRET_TOKEN', default_apps_script_token)
