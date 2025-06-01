@@ -1,0 +1,45 @@
+name: CTF Progress Tracker Update
+
+on:
+  schedule:
+    # Runs every day at 05:00 UTC (adjust as needed for your timezone preference)
+    # Use https://crontab.guru to help create cron expressions
+    - cron: '0 5 * * *'
+  workflow_dispatch: # Allows manual triggering from the Actions tab
+
+jobs:
+  update-ctf-progress:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Important: Allows the Action to commit to the repository
+
+    steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4 # Use the latest major version
+
+    - name: Set up Python
+      uses: actions/setup-python@v5 # Use the latest major version
+      with:
+        python-version: '3.10' # Or your preferred stable Python version
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
+
+    - name: Run CTF tracker script
+      env:
+        APPS_SCRIPT_WEB_APP_URL: ${{ secrets.APPS_SCRIPT_WEB_APP_URL }}
+        APPS_SCRIPT_SECRET_TOKEN: ${{ secrets.APPS_SCRIPT_SECRET_TOKEN }}
+        # For matplotlib in a headless environment (like GitHub Actions)
+        MPLBACKEND: 'Agg'
+      run: python tracker.py
+
+    - name: Commit and push if changed
+      uses: stefanzweifel/git-auto-commit-action@v5 # Use the latest major version
+      with:
+        commit_message: "📊 Automated CTF progress chart update"
+        file_pattern: progress_chart.png # Only commit if this file changes
+        # Optional: Customize commit author
+        commit_user_name: CTF Tracker Bot
+        commit_user_email: actions@github.com # Or your own noreply email
